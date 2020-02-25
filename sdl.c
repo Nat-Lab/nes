@@ -5,6 +5,17 @@
 static int sdl_initialized = 0;
 
 /**
+ * @brief check if SDL is ready
+ * 
+ * @return int status
+ * @retval -1 failed
+ * @retval 0 OK
+ */
+int sdl_ready() {
+    return sdl_initialized == 1;
+}
+
+/**
  * @brief initialize SDL
  * 
  * @return int status
@@ -21,10 +32,12 @@ int sdl_init() {
         return -1;
     }
 
-    if (SDL_Init(SDL_INIT_EVENTS | SDL_INIT_AUDIO | SDL_INIT_VIDEO)) {
+    if (SDL_Init(SDL_INIT_EVENTS | SDL_INIT_TIMER)) {
         log_fatal("SDL_Init: %s\n", SDL_GetError());
         return -1;
     }
+
+    sdl_initialized = 1;
 
     return 0;    
 }

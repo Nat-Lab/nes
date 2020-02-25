@@ -1,4 +1,5 @@
 #include "gfx.h"
+#include "sdl.h"
 #include "log.h"
 #include <SDL2/SDL.h>
 #define NES_W 256
@@ -9,7 +10,6 @@ static SDL_Texture *texture = NULL;
 static SDL_Renderer *rndr = NULL;
 static SDL_Window *window = NULL;
 static uint32_t pixbuf[NES_W][NES_H];
-
 /**
  * @brief start a new frame
  * 
@@ -39,11 +39,26 @@ inline void gfx_set_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
  * @retval 0 OK
  */
 int gfx_init() {
+    if (!sdl_ready()) {
+        log_error("SDL is not ready. call sdl_init();\n");
+        return -1;
+    }
+
     if (gfx_initialized == 1) {
         log_warn("GFX already initialized.\n");
         return 0;
     } else if (gfx_initialized == -1) {
         log_fatal("GFX: end of life cycle.\n");
+        return -1;
+    }
+
+    if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0")) {
+        log_warn("failed to set render scale mode.\n");
+    }
+
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
+        log_fatal("SDL video subsystem init failed.\n");
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
         return -1;
     }
 
@@ -78,6 +93,7 @@ void gfx_deinit() {
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(rndr);
     SDL_DestroyWindow(window);
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
     gfx_initialized = -1;
 }
 
