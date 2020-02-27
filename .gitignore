@@ -1,0 +1,6 @@
+*.dSYM
+*.nes
+*.o
+nes
+legacy
+.vscode
