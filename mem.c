@@ -1,7 +1,7 @@
 #include "mem.h"
 #include <memory.h>
 
-static uint8_t mem[0xffff];
+static uint8_t mem[0x10000];
 
 /**
  * @brief Read from vCPU memory
