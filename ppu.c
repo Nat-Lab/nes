@@ -1,7 +1,7 @@
 #include "ppu.h"
 #include "log.h"
 #include <memory.h>
-#define REG[x] reg[x - 0x2000]
+#define REG(x) reg[x - 0x2000]
 
 // mem
 static uint8_t sprite_mem[0x100];
@@ -9,9 +9,9 @@ static uint8_t mem[0x4000];
 
 // registers
 static uint8_t reg[8];
-static enum ppu_regname {
+enum ppu_regname {
     PPUCTRL, PPUMASK, PPUSTATUS, OAMADDR, OAMDATA, PPUSCROLL, PPUADDR, PPUDATA,
-    OAMDATA
+    OAMDMA
 };
 
 
