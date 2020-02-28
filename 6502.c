@@ -341,7 +341,7 @@ inline void status_6502() {
  * @brief CPU NMI 
  * 
  */
-inline void interrupt_6502() {
+extern inline void interrupt_6502() {
     // TODO
 }
 
