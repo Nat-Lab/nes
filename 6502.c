@@ -73,7 +73,8 @@ uint64_t cycles; // total cycles
 #define I_RST 0xfffc
 #define I_BRK 0xfffe
 
-#define DEBUG_6502
+//#define DEBUG_6502
+//#define DEBUG_CYCLE 76038
 #ifdef DEBUG_6502
 #define STRING(s) #s
 #define PRINT_OP(op, amn, opn) log_debug("opcode: %.2x (am: %s, op: %s), am_result: %u, value: %u.\n", op, amn, opn, a, v);
@@ -370,7 +371,7 @@ inline uint64_t cycles_6502() {
 inline void run_6502() {
     uint8_t op = cpuread(pc++);
 #ifdef DEBUG_6502
-    if (cycles >= 0) {
+    if (cycles >= DEBUG_CYCLE) {
         printf("op: %.2x, a: %u, v: %u, acc: %u, x: %u, y: %u, pc: %u, sp: %u, s: %u, cyc: %llu.\n", op, a, v, acc, x, y, pc, sp, s, cycles);
     }
 #endif
