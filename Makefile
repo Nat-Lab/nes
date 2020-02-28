@@ -1,6 +1,6 @@
-CFLAGS=-g -Wall -Wextra -Wno-unused-function -Wno-unused-parameter
+CFLAGS=-g -Wall -Wextra
 TARGETS=nes
-OBJS=6502.o cpu.o gfx.o main.o mem.o ppu.o rom.o sdl.o
+OBJS=6502.o gfx.o main.o mem.o ppu.o rom.o sdl.o
 
 .PHONY: all clean
 all: $(TARGETS)
