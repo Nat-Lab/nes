@@ -9,7 +9,7 @@ static int gfx_initialized = 0;
 static SDL_Texture *texture = NULL;
 static SDL_Renderer *rndr = NULL;
 static SDL_Window *window = NULL;
-static uint32_t pixbuf[NES_W][NES_H];
+static uint32_t pixbuf[NES_W * NES_H];
 /**
  * @brief start a new frame
  * 
@@ -28,7 +28,11 @@ void gfx_new_frame() {
  * @param b blue channel
  */
 inline void gfx_set_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
-    pixbuf[x][y] = (0xff000000 | (r<<16) | (g << 8)| b);
+    if (x >= NES_W || y >= NES_H) {
+        log_warn("pixel (%d, %d) out of bound.\n", x, y);
+        return;
+    }
+    pixbuf[y * NES_W + x] = (0xff000000 | (r << 16) | (g << 8)| b);
 }
 
 /**
