@@ -73,13 +73,26 @@ uint64_t cycles; // total cycles
 #define I_RST 0xfffc
 #define I_BRK 0xfffe
 
+#define DEBUG_6502
+#ifdef DEBUG_6502
+#define STRING(s) #s
+#define PRINT_OP(op, amn, opn) log_debug("opcode: %.2x (am: %s, op: %s), am_result: %u, value: %u.\n", op, amn, opn, a, v);
+#else
+#define PRINT_OP(o, a, n)
+#endif 
+
+
 /* make case statement for OP */
-#define OP(opcode, amname, opname, cycle) case opcode: { AM_##amname(); OP_##opname(); cycles += cycle; break; }
+#define OP(opcode, amname, opname, cycle) \
+case opcode: {\
+    AM_##amname(); OP_##opname(); cycles += cycle; PRINT_OP(opcode, #amname, #opname);\
+    break;\
+}
 
 /** begin AM_* **/
 #define AM_NII() log_warn("cpu got unimplemented addressing mode.\n");
 #define AM_IMP()
-#define AM_IMM() v = cpuread(a = pc++);
+#define AM_IMM() v = cpuread(pc++);
 #define AM_ABS() \
 {\
     uint16_t p = pc; pc += 2;\
@@ -89,14 +102,14 @@ uint64_t cycles; // total cycles
 #define AM_ABX() \
 {\
     uint16_t p = pc; pc += 2;\
-    a = ((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8) + x; \
+    a = (((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8)) + x; \
     v = cpuread(a); \
     if (a >> 8 != p >>8) cycles++;\
 }
 #define AM_ABY() \
 {\
     uint16_t p = pc; pc += 2;\
-    a = ((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8) + y; \
+    a = (((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8)) + y; \
     v = cpuread(a); \
     if (a >> 8 != p >>8) cycles++;\
 }
@@ -114,16 +127,14 @@ uint64_t cycles; // total cycles
 {\
     uint8_t b = cpuread(pc++) + x;\
     a = ((uint16_t) cpuread(b)) | (uint16_t) ((uint16_t) cpuread(b+1) << 8);\
+    v = cpuread(a);\
 }
 #define AM_INY() \
 {\
     uint8_t b = cpuread(pc++);\
-    a = ((uint16_t) cpuread(b)) | (uint16_t) ((uint16_t) cpuread(b+1) << 8) + y;\
+    a = (((cpuread((b + 1) & 0xFF) << 8) | cpuread(b)) + y) & 0xFFFF; v = cpuread(a);\
+    if ((a >> 8) != (pc >> 8)) { cycles++; }\
 }
-/*#define AM_REL() \
-    a = cpuread(pc++); a += (pc + (int8_t) a);\
-    if (a >> 8 != pc >> 8) cycles++;*/
-
 #define AM_REL() a = cpuread(pc++); if (a & 0x80) a -= 0x100; a += pc; if ((a >> 8) != (pc >> 8)) cycles++;
 /** end AM_* **/
 
@@ -151,8 +162,8 @@ uint64_t cycles; // total cycles
     SIF_OVFL(((acc ^ v) & 0x80) && ((acc ^ r8) & 0x80));\
     CHK_NZ(acc = r8);\
 }
-#define OP_INC() CHK_NZ(++v); cpuwrt(a, v); // inc value
-#define OP_DEC() CHK_NZ(--v); cpuwrt(a, v); // dec value
+#define OP_INC() CHK_NZ(v+1); cpuwrt(a, v+1); // inc value
+#define OP_DEC() CHK_NZ(v-1); cpuwrt(a, v-1); // dec value
 #define OP_AND() CHK_NZ(acc &= v); // and
 #define OP_ORA() CHK_NZ(acc |= v); // or
 #define OP_EOR() CHK_NZ(acc ^= v); // eor
@@ -234,7 +245,7 @@ uint64_t cycles; // total cycles
 }
 #define OP_RTS() \
 {\
-    uint8_t l = POP(), h = POP(); pc = 1 + ((uint16_t) l | (uint16_t) h << 8);\
+    uint8_t l = POP(), h = POP(); pc = ((uint16_t) l | ((uint16_t) h << 8));\
 }
 #define OP_NOP() // nop
 // break (intr)
@@ -277,11 +288,12 @@ uint64_t cycles; // total cycles
  * @return uint8_t value
  */
 static inline uint8_t cpuread(uint16_t addr) {
-    if (addr < 0x2000) return memread(addr); // internal ram & mirror
-    if (addr < 0x4000) return ppu_get_reg(addr);
-    if (addr < 0x4020) {
-        log_warn("FIXME: I/O and audio not implemented.\n");
-        return (uint8_t) -1;
+    switch (addr >> 13) {
+        case 0: return memread(addr & 0x07FF);
+        case 1: return ppu_get_reg(addr);
+        case 2: return 255; // TODO
+        case 3: return memread(addr & 0x1FFF);
+        default: return memread(addr);
     }
     return memread(addr);
 }
@@ -293,46 +305,75 @@ static inline uint8_t cpuread(uint16_t addr) {
  * @param val value
  */
 static inline void cpuwrt(uint16_t addr, uint8_t val) {
-    if (addr < 0x2000) { // internal ram & mirror
-        uint16_t ba = addr & 0x07ff; // base addr
-        memwrt(ba, val); 
-        memwrt(ba + 0x0800, val); // mirrored  
+    // DMA transfer
+    switch (addr >> 13) {
+        case 0: return memwrt(addr & 0x07FF, val);
+        case 1: return ppu_set_reg(addr, val);
+        case 2: return; // TODO
+        case 3: return memwrt(addr & 0x1FFF, val);
+        default: {
+            log_warn("prg-rom write!\n");
+            return memwrt(addr, val);
+        }
     }
-    if (addr < 0x4000) ppu_set_reg(addr, val);
-    if (addr < 0x4020) {
-        log_warn("FIXME: I/O and audio not implemented.\n");
-        return;
-    }
-    log_warn("writing to PRG.\n");
-    memwrt(addr, val);
 }
 
-void reset_6502() {
+/**
+ * @brief reset CPU
+ * 
+ */
+inline void reset_6502() {
     pc = ((uint16_t) cpuread(I_RST) | (uint16_t) ((uint16_t) cpuread(I_RST + 1) << 8));
     sp -= 3;
     SE_ID();
 }
 
-void status_6502() {
+/**
+ * @brief print CPU status
+ * 
+ */
+inline void status_6502() {
     log_debug("acc: %3u, x: %3u, y: %3u, pc: %6u, sp: %3u, s: %3u, cycles: %llu.\n", acc, x, y, pc, sp, s, cycles);
 }
 
+/**
+ * @brief CPU NMI 
+ * 
+ */
 inline void interrupt_6502() {
     // TODO
 }
 
+/**
+ * @brief init CPU
+ * 
+ */
 inline void init_6502() {
     s = 0b00100100;
     sp = 0;
     a = x = y = 0;
 }
 
+/**
+ * @brief Get current CPU cycle count.
+ * 
+ * @return uint64_t cycle.
+ */
 inline uint64_t cycles_6502() {
     return cycles;
 }
 
-void run_6502() {
+/**
+ * @brief Run one instruction
+ * 
+ */
+inline void run_6502() {
     uint8_t op = cpuread(pc++);
+#ifdef DEBUG_6502
+    if (cycles >= 0) {
+        printf("op: %.2x, a: %u, v: %u, acc: %u, x: %u, y: %u, pc: %u, sp: %u, s: %u, cyc: %llu.\n", op, a, v, acc, x, y, pc, sp, s, cycles);
+    }
+#endif
     switch(op) {
         OP(0x00, IMP, BRK, 7) OP(0x01, INX, ORA, 6) OP(0x03, INX, SLO, 8) OP(0x04, ZPG, NOP, 2) OP(0x05, ZPG, ORA, 3) 
         OP(0x06, ZPG, ASL, 5) OP(0x07, ZPG, SLO, 5) OP(0x08, IMP, PHP, 3) OP(0x09, IMM, ORA, 2) OP(0x0A, IMP, ASLA, 2) 
