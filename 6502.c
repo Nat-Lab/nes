@@ -353,6 +353,7 @@ inline void init_6502() {
     s = 0b00100100;
     sp = 0;
     a = x = y = 0;
+    reset_6502();
 }
 
 /**
