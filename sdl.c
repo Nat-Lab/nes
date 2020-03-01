@@ -3,6 +3,20 @@
 #include <SDL2/SDL.h>
 
 static int sdl_initialized = 0;
+static SDL_TimerID timer_id = 0;
+
+static uint32_t sdl_timer_callback(uint32_t i, void *p) {
+    SDL_Event e;
+    SDL_UserEvent ue;
+
+    ue.type = SDL_USEREVENT;
+    ue.code = 0;
+    ue.data1 = ue.data2 = 0;
+    e.type = SDL_USEREVENT;
+    e.user = ue;
+    SDL_PushEvent(&e);
+    return i;
+}
 
 /**
  * @brief check if SDL is ready
@@ -37,6 +51,11 @@ int sdl_init() {
         return -1;
     }
 
+    if ((timer_id = SDL_AddTimer(17, sdl_timer_callback, NULL)) == 0) {
+        log_fatal("SDL_AddTimer: %s\n", SDL_GetError());
+        return -1;
+    }
+
     sdl_initialized = 1;
 
     return 0;    
@@ -47,6 +66,7 @@ int sdl_init() {
  * 
  */
 void sdl_deinit() {
+    if (timer_id != 0) SDL_RemoveTimer(timer_id);
     SDL_Quit();
     sdl_initialized = -1;
 }
