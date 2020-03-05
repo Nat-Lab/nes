@@ -46,7 +46,7 @@
 
 #define SSTAT_VB(x)  if (x) ppustatus |= 0b10000000; else ppustatus &= 0b01111111
 #define SSTAT_SH(x)  if (x) ppustatus |= 0b01000000; else ppustatus &= 0b10111111
-#define SSTAT_SO(x)  if (x) ppustatus |= 0b00100000: else ppustatus &= 0b11011111
+#define SSTAT_SO(x)  if (x) ppustatus |= 0b00100000; else ppustatus &= 0b11011111
 #define SSTAT_LSB(x) ppustatus = (ppustatus & 0b11100000) | ((x) & 0b00011111)
 
 static const uint16_t bnta[4] = { 0x2000, 0x2400, 0x2800, 0x2C00 };
@@ -66,6 +66,7 @@ uint8_t tmpaddr;
 
 // hittest
 uint8_t bg[264][248];
+uint8_t hit;
 
 // l-h uint8_ts pair
 uint8_t ppu_lhtab[256][256][8];
@@ -156,8 +157,13 @@ inline void ppucpy (uint16_t dst, const uint8_t *src, size_t sz) {
 inline uint8_t ppu_get_reg(uint16_t address) {
     ppuaddr &= 0x3FFF;
     switch (address & 7) {
-        case 0: {
-            return 0xff;
+        case 0:
+        case 1:
+        case 3:
+        case 5:
+        case 6: {
+            //log_warn("ignored read from write-only register 0x%.4x.\n", address + 0x2000);
+            return (uint8_t) -1;
         }
         case 2: {
             uint8_t value = ppustatus;
@@ -168,7 +174,7 @@ inline uint8_t ppu_get_reg(uint16_t address) {
             ppur7r = 1;
             return value;
         }
-        case 4: return  smem[oamaddr];
+        case 4: return smem[oamaddr];
         case 7: {
             uint8_t data;
             
@@ -179,15 +185,11 @@ inline uint8_t ppu_get_reg(uint16_t address) {
                 data = ppuread(ppuaddr);
             }
             
-            if (ppur7r) {
-                ppur7r = 0;
-            }
-            else {
-                ppuaddr += (CTRL_RAI) ? 32 : 1;
-            }
+            if (ppur7r) ppur7r = 0;
+            else ppuaddr += (CTRL_RAI) ? 32 : 1;
             return data;
         }
-        default: return 0xff;
+        default: return (uint8_t) -1;
     }
 }
 
@@ -222,13 +224,13 @@ inline void ppu_set_reg(uint16_t addr, uint8_t val) {
             return;
         }
         case 5: {
-            if (!xscroll_wrt_count)
+            if (xscroll_wrt_count) {
                 yscroll = val;
-            else
-                xscroll = val;
+            }
+            else xscroll = val;
 
-            xscroll_wrt_count ^= 1;
-            break;
+            xscroll_wrt_count = !xscroll_wrt_count;
+            return;
         }
         case 6: {
             if (ppuaddr_rh)
@@ -251,6 +253,10 @@ inline void ppu_set_reg(uint16_t addr, uint8_t val) {
     // unreached
 }
 
+/**
+ * @brief init ppu
+ * 
+ */
 inline void ppu_init() {
     ppuctrl = ppumask = oamaddr = xscroll = yscroll = wpos = ppudata = 0;
     xscroll_wrt_count = ppuaddr_rh = ppur7r = tmpaddr = 0;
@@ -269,6 +275,11 @@ inline void ppu_init() {
     } 
 }
 
+/**
+ * @brief render background
+ * 
+ * @param mirror mirror
+ */
 static inline void rndr_bg(uint8_t mirror) {
     for (uint8_t tile_x = MASK_SBG8 ? 0 : 1; tile_x < 32; tile_x++) {
         if (((tile_x << 3) - xscroll + (mirror ? 256 : 0)) > 256) continue;
@@ -280,12 +291,10 @@ static inline void rndr_bg(uint8_t mirror) {
         uint8_t l = ppuread(tile_address + y_in_tile);
         uint8_t h = ppuread(tile_address + y_in_tile + 8);
 
-        int x;
-        for (x = 0; x < 8; x++) {
+        for (int x = 0; x < 8; x++) {
             uint8_t color = ppu_lhtab[l][h][x];
 
-            if (color != 0) {
-                
+            if (color != 0) { 
                 uint16_t attribute_address = (bnta[CTRL_BNTA] + (mirror ? 0x400 : 0) + 0x3C0 + (tile_x >> 2) + (scanline >> 5) * 8);
                 uint8_t top = (scanline % 32) < 16;
                 uint8_t left = (tile_x % 4 < 2);
@@ -310,28 +319,91 @@ static inline void rndr_bg(uint8_t mirror) {
     }
 }
 
+/**
+ * @brief render sprites
+ * 
+ */
+static inline void rndr_spr() {
+    int scanline_sprite_count = 0;
+    int n;
+    for (n = 0; n < 0x100; n += 4) {
+        uint8_t sprite_x = smem[n + 3];
+        uint8_t sprite_y = smem[n];
+
+        // Skip if sprite not on scanline
+        if (sprite_y > scanline || sprite_y + (CTRL_SPSZ ? 16 : 8) < scanline)
+           continue;
+
+        scanline_sprite_count++;
+
+        // PPU can't render > 8 sprites
+        if (scanline_sprite_count > 8) {
+            SSTAT_SO(1);
+            // break;
+        }
+
+        uint8_t vflip = smem[n + 2] & 0x80;
+        uint8_t hflip = smem[n + 2] & 0x40;
+
+        uint16_t tile_address = (CTRL_STB ? 0x1000 : 0x0000) + 16 * smem[n + 1];
+        int y_in_tile = scanline & 0x7;
+        uint8_t l = ppuread(tile_address + (vflip ? (7 - y_in_tile) : y_in_tile));
+        uint8_t h = ppuread(tile_address + (vflip ? (7 - y_in_tile) : y_in_tile) + 8);
+
+        uint8_t palette_attribute = smem[n + 2] & 0x3;
+        uint16_t palette_address = 0x3F10 + (palette_attribute << 2);
+        int x;
+        for (x = 0; x < 8; x++) {
+            int color = hflip ? ppu_lhtabf[l][h][x] : ppu_lhtab[l][h][x];
+
+            if (color != 0) {
+                int screen_x = sprite_x + x;
+                int idx = ppuread(palette_address + color);
+                
+                if (smem[n + 2] & 0x20) {
+                    gfx_set_pixel(screen_x, sprite_y + y_in_tile + 1, palette[idx].r, palette[idx].g,  palette[idx].b); // FIXME: bbg
+                }
+                else {
+                    gfx_set_pixel(screen_x, sprite_y + y_in_tile + 1, palette[idx].r, palette[idx].g,  palette[idx].b); // FIXME: bbg
+                }
+
+                if (MASK_SBG && !hit && n == 0 && bg[screen_x][sprite_y + y_in_tile] == color) {
+                    SSTAT_SH(1);
+                    hit = 1;
+                }
+            }
+        }
+    }
+}
+
 extern inline void ppu_run() {
     ++scanline;
 
     if (MASK_SBG) {
         rndr_bg(0);
-        rndr_bg(1);
+        //rndr_bg(1);
     }
 
     if (MASK_SSP) {
-        // TODO
+        rndr_spr();
     }
 
     if (scanline == 241) {
         SSTAT_VB(1);
         SSTAT_SH(0);
-        interrupt_6502();
+        if (CTRL_NMI) interrupt_6502();
     } else if (scanline == 262) {
         scanline = -1;
+        hit = 0;
         SSTAT_VB(0);
         gfx_render();
+        gfx_new_frame();
     }
     
+}
+
+inline void ppu_sprram_write(uint8_t val) {
+    smem[oamaddr++] = val;
 }
 
 void ppu_set_mirroring(uint8_t mir) {

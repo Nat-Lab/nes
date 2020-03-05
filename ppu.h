@@ -12,6 +12,7 @@ uint8_t ppu_io_read(uint16_t address);
 uint8_t ppu_get_reg(uint16_t addr);
 void ppu_set_reg(uint16_t addr, uint8_t val);
 void ppu_set_mirroring(uint8_t mir);
+void ppu_sprram_write(uint8_t val);
 void ppu_init();
 void ppu_run();
 
