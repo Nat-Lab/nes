@@ -29,7 +29,7 @@ void gfx_new_frame() {
  */
 inline void gfx_set_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
     if (x >= NES_W || y >= NES_H) {
-        log_warn("pixel (%d, %d) out of bound.\n", x, y);
+        //log_warn("pixel (%d, %d) out of bound.\n", x, y);
         return;
     }
     pixbuf[y * NES_W + x] = (0xff000000 | (r << 16) | (g << 8)| b);
