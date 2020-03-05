@@ -117,6 +117,7 @@ static inline void cpuwrt(uint16_t addr, uint8_t val) {
     int i;
     if (addr == 0x4014) {
         for (i = 0; i < 256; i++) {
+            ppu_sprram_write(cpuread((0x100 * val) + i));
             //ppu_sprram_write(cpu_ram_read((0x100 * data) + i));
         }
         return;
