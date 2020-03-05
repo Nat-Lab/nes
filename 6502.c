@@ -74,7 +74,7 @@ uint64_t cycles; // total cycles
 #define I_BRK 0xfffe
 
 //#define DEBUG_6502
-//#define DEBUG_CYCLE 76038
+//#define DEBUG_CYCLE 0
 #ifdef DEBUG_6502
 #define STRING(s) #s
 #define PRINT_OP(op, amn, opn) log_debug("opcode: %.2x (am: %s, op: %s), am_result: %u, value: %u.\n", op, amn, opn, a, v);
@@ -90,84 +90,162 @@ case opcode: {\
     break;\
 }
 
+/**
+ * @brief read from CPU address
+ * 
+ * @param addr address
+ * @return uint8_t value
+ */
+static inline uint8_t cpuread(uint16_t addr) {
+    switch (addr >> 13) {
+        case 0: return memread(addr & 0x07FF);
+        case 1: return ppu_get_reg(addr);
+        case 2: return 255; // TODO
+        case 3: return memread(addr & 0x1FFF);
+        default: return memread(addr);
+    }
+    return memread(addr);
+}
+
+/**
+ * @brief write to CPU address
+ * 
+ * @param addr address
+ * @param val value
+ */
+static inline void cpuwrt(uint16_t addr, uint8_t val) {
+    int i;
+    if (addr == 0x4014) {
+        for (i = 0; i < 256; i++) {
+            //ppu_sprram_write(cpu_ram_read((0x100 * data) + i));
+        }
+        return;
+    }
+    switch (addr >> 13) {
+        case 0: return memwrt(addr & 0x07FF, val);
+        case 1: return ppu_set_reg(addr, val);
+        case 2: return; // TODO
+        case 3: return memwrt(addr & 0x1FFF, val);
+        default: {
+            log_warn("prg-rom write!\n");
+            return memwrt(addr, val);
+        }
+    }
+}
+
 /** begin AM_* **/
-#define AM_NII() log_warn("cpu got unimplemented addressing mode.\n");
-#define AM_IMP()
-#define AM_IMM() v = cpuread(pc++);
-#define AM_ABS() \
-{\
-    uint16_t p = pc; pc += 2;\
-    a = ((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8);\
-    v = cpuread(a);\
+static inline void AM_IMP() {}
+static inline void AM_IMM() {
+    v = cpuread(pc++);
 }
-#define AM_ABX() \
-{\
-    uint16_t p = pc; pc += 2;\
-    a = (((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8)) + x; \
-    v = cpuread(a); \
-    if (a >> 8 != p >>8) cycles++;\
+static inline void AM_ABS() {
+    uint16_t p = pc; pc += 2;
+    a = ((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8);
+    v = cpuread(a);
 }
-#define AM_ABY() \
-{\
-    uint16_t p = pc; pc += 2;\
-    a = (((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8)) + y; \
-    v = cpuread(a); \
-    if (a >> 8 != p >>8) cycles++;\
+static inline void AM_ABX() {
+    uint16_t p = pc; pc += 2;
+    a = (((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8)) + x;
+    v = cpuread(a); 
+    if (a >> 8 != p >>8) cycles++;
 }
-#define AM_ZPG() a = cpuread(pc++); v = cpuread(a);
-#define AM_ZPX() a = (cpuread(pc++) + x) & 0x00ff; v = cpuread(a);
-#define AM_ZPY() a = (cpuread(pc++) + y) & 0x00ff; v = cpuread(a);
-#define AM_IND() \
-{\
-    uint16_t p = pc; pc += 2;\
-    uint16_t b1 = ((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1));\
-    uint16_t b2 = (b1 & (uint16_t) 0xff00) | ((b1 + 1) & (uint16_t) 0x00ff);\
-    a = ((uint16_t) cpuread(b1)) | (uint16_t) ((uint16_t) cpuread(b2) << 8);\
+static inline void AM_ABY() {
+    uint16_t p = pc; pc += 2;
+    a = (((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1) << 8)) + y;
+    v = cpuread(a);
+    if (a >> 8 != p >>8) cycles++;
 }
-#define AM_INX() \
-{\
-    uint8_t b = cpuread(pc++) + x;\
-    a = ((uint16_t) cpuread(b)) | (uint16_t) ((uint16_t) cpuread(b+1) << 8);\
-    v = cpuread(a);\
+static inline void AM_ZPG() {
+    a = cpuread(pc++);
+    v = cpuread(a);
 }
-#define AM_INY() \
-{\
-    uint8_t b = cpuread(pc++);\
-    a = (((cpuread((b + 1) & 0xFF) << 8) | cpuread(b)) + y) & 0xFFFF; v = cpuread(a);\
-    if ((a >> 8) != (pc >> 8)) { cycles++; }\
+static inline void AM_ZPX() {
+    a = (cpuread(pc++) + x) & 0x00ff;
+    v = cpuread(a);
 }
-#define AM_REL() a = cpuread(pc++); if (a & 0x80) a -= 0x100; a += pc; if ((a >> 8) != (pc >> 8)) cycles++;
+static inline void AM_ZPY() {
+    a = (cpuread(pc++) + y) & 0x00ff; 
+    v = cpuread(a);
+}
+static inline void AM_IND() {
+    uint16_t p = pc; pc += 2;
+    uint16_t b1 = ((uint16_t) cpuread(p)) | (uint16_t) ((uint16_t) cpuread(p+1));
+    uint16_t b2 = (b1 & (uint16_t) 0xff00) | ((b1 + 1) & (uint16_t) 0x00ff);
+    a = ((uint16_t) cpuread(b1)) | (uint16_t) ((uint16_t) cpuread(b2) << 8);
+}
+static inline void AM_INX() {
+    uint8_t b = cpuread(pc++) + x;
+    a = ((uint16_t) cpuread(b)) | (uint16_t) ((uint16_t) cpuread(b+1) << 8);
+    v = cpuread(a);
+}
+static inline void AM_INY() {
+    uint8_t b = cpuread(pc++);
+    a = (((cpuread((b + 1) & 0xFF) << 8) | cpuread(b)) + y) & 0xFFFF; v = cpuread(a);
+    if ((a >> 8) != (pc >> 8)) cycles++; 
+}
+
+//#define AM_REL() a = cpuread(pc++); if (a & 0x80) a -= 0x100; a += pc; if ((a >> 8) != (pc >> 8)) cycles++;
+static inline void AM_REL() {
+    a = cpuread(pc++);
+    if (a & 0x80) a -= 0x100; a += pc;
+    if ((a >> 8) != (pc >> 8)) cycles++;
+}
 /** end AM_* **/
 
 /** begin OP_* **/
-#define OP_NII() log_warn("cpu got unimplemented instruction.\n"); // not implemented
-#define OP_LDA() CHK_NZ(acc = v); // load acc
-#define OP_LDX() CHK_NZ(x = v);   // load x
-#define OP_LDY() CHK_NZ(y = v);   // load y
-#define OP_STA() cpuwrt(a, acc); // wrt acc
-#define OP_STX() cpuwrt(a, x); // wrt x
-#define OP_STY() cpuwrt(a, y); // wrt y
+static inline void OP_NII() {
+    // not implemented
+    log_warn("cpu got unimplemented instruction.\n");
+}
+static inline void OP_LDA() {
+    CHK_NZ(acc = v); // load acc
+}
+static inline void OP_LDX() {
+    CHK_NZ(x = v);   // load x
+}
+static inline void OP_LDY() {
+    CHK_NZ(y = v);   // load y
+}
+static inline void OP_STA() {
+    cpuwrt(a, acc); // wrt acc
+}
+static inline void OP_STX() {
+    cpuwrt(a, x); // wrt x
+}
+static inline void OP_STY() {
+    cpuwrt(a, y); // wrt y
+}
 // add w/ carry
-#define OP_ADC() \
-{\
-    uint16_t r = acc + v + (S_CARRY ? 1 : 0);\
-    SIF_CARRY(r >> 8); uint8_t r8 = (uint8_t) r;\
-    SIF_OVFL(!((acc ^ v) & 0b10000000) && ((acc ^ r8) & 0b10000000));\
-    CHK_NZ(acc = r8);\
+static inline void OP_ADC() {
+    uint16_t r = acc + v + (S_CARRY ? 1 : 0);
+    SIF_CARRY(r >> 8); uint8_t r8 = (uint8_t) r;
+    SIF_OVFL(!((acc ^ v) & 0b10000000) && ((acc ^ r8) & 0b10000000));
+    CHK_NZ(acc = r8);
 }
 // sub w/ carry
-#define OP_SBC() \
-{\
-    uint16_t r = acc - v - (S_CARRY ? 0 : 1);\
-    SIF_CARRY(!(r >> 8)); uint8_t r8 = (uint8_t) r;\
-    SIF_OVFL(((acc ^ v) & 0x80) && ((acc ^ r8) & 0x80));\
-    CHK_NZ(acc = r8);\
+static inline void OP_SBC() {
+    uint16_t r = acc - v - (S_CARRY ? 0 : 1);
+    SIF_CARRY(!(r >> 8)); uint8_t r8 = (uint8_t) r;
+    SIF_OVFL(((acc ^ v) & 0x80) && ((acc ^ r8) & 0x80));
+    CHK_NZ(acc = r8);
 }
-#define OP_INC() CHK_NZ(v+1); cpuwrt(a, v+1); // inc value
-#define OP_DEC() CHK_NZ(v-1); cpuwrt(a, v-1); // dec value
-#define OP_AND() CHK_NZ(acc &= v); // and
-#define OP_ORA() CHK_NZ(acc |= v); // or
-#define OP_EOR() CHK_NZ(acc ^= v); // eor
+static inline void OP_INC() {
+    CHK_NZ(v+1);
+    cpuwrt(a, v+1); // inc value
+}
+static inline void OP_DEC() {
+    CHK_NZ(v-1);
+    cpuwrt(a, v-1); // dec value
+}
+static inline void OP_AND() {
+    CHK_NZ(acc &= v); // and
+}
+static inline void OP_ORA() {
+    CHK_NZ(acc |= v); // or
+}
+static inline void OP_EOR() {
+    CHK_NZ(acc ^= v); // eor
+}
 #define OP_INX() CHK_NZ(++x); // incr x
 #define OP_DEX() CHK_NZ(--x); // desc x
 #define OP_INY() CHK_NZ(++y); // incr y
@@ -215,9 +293,10 @@ case opcode: {\
 #define OP_LSRA() SIF_CARRY(acc & 1); CHK_NZ(acc = acc >> 1);
 // << 1
 #define OP_ROL() v = v << 1; CHK_NZ(v |= S_CARRY); SIF_CARRY(v & 0b100000000); cpuwrt(a, v);
-#define OP_ROLA() \
-{\
-    uint16_t a16 = acc; acc = acc << 1;  CHK_NZ(acc = a16 |= S_CARRY); SIF_CARRY(a16 & 0x100);\
+static inline void OP_ROLA() {
+    uint16_t a16 = acc << 1; 
+    CHK_NZ(acc = a16 |= S_CARRY); 
+    SIF_CARRY(a16 & 0x100);
 }
 #define OP_ROR() v |= S_CARRY << 8; SIF_CARRY(v & 1); CHK_NZ(v = v >> 1); cpuwrt(a, v);
 #define OP_RORA() \
@@ -240,21 +319,35 @@ case opcode: {\
 #define OP_BPL() if (!S_NEG) pc = a;
 #define OP_BVS() if (S_OVFL) pc = a;
 #define OP_BVC() if (!S_OVFL) pc = a;
-#define OP_JSR() \
-{\
-    uint16_t lp = pc; PSH(lp >> 8); PSH(lp); pc = a;\
+static inline void OP_JSR() {
+    uint16_t lp = pc - 1;
+    PSH(lp >> 8);
+    PSH(lp);
+    pc = a;
 }
-#define OP_RTS() \
-{\
-    uint8_t l = POP(), h = POP(); pc = ((uint16_t) l | ((uint16_t) h << 8));\
+static inline void OP_RTS() {
+    uint8_t l = POP(), h = POP(); 
+    pc = 1 + ((uint16_t) l | ((uint16_t) h << 8)); // OK: pre-incr in JSR
 }
 #define OP_NOP() // nop
 // break (intr)
-#define OP_BRK() ++pc; PSH(pc >> 8); PSH(pc); SE_B(); SE_R(); PSH(s); SE_ID(); pc = ((uint16_t) cpuread(I_NMI) | (uint16_t) ((uint16_t) cpuread(I_NMI + 1) << 8));
+static inline void OP_BRK() {
+    --pc;
+    PSH(pc >> 8); 
+    PSH(pc);
+    SE_B();
+    SE_R();
+    PSH(s);
+    SE_ID();
+    pc = ((uint16_t) cpuread(I_NMI) | (uint16_t) ((uint16_t) cpuread(I_NMI + 1) << 8));
+}
 // return from break (intr)
-#define OP_RTI() \
-{\
-    s = POP(); SE_R(); CL_B(); uint8_t l = POP(); uint8_t h = POP(); pc = (uint16_t) l | (uint16_t) h << 8;\
+static inline void OP_RTI() {
+    s = POP(); 
+    SE_R();
+    CL_B();
+    uint8_t l = POP(), h = POP(); 
+    pc = (uint16_t) l | (uint16_t) h << 8;
 }
 // extend
 #define OP_ASR() OP_AND(); OP_LSRA();
@@ -282,42 +375,7 @@ case opcode: {\
 #define OP_LAS() OP_NII();
 /** end OP_* **/
 
-/**
- * @brief read from CPU address
- * 
- * @param addr address
- * @return uint8_t value
- */
-static inline uint8_t cpuread(uint16_t addr) {
-    switch (addr >> 13) {
-        case 0: return memread(addr & 0x07FF);
-        case 1: return ppu_get_reg(addr);
-        case 2: return 255; // TODO
-        case 3: return memread(addr & 0x1FFF);
-        default: return memread(addr);
-    }
-    return memread(addr);
-}
 
-/**
- * @brief write to CPU address
- * 
- * @param addr address
- * @param val value
- */
-static inline void cpuwrt(uint16_t addr, uint8_t val) {
-    // DMA transfer
-    switch (addr >> 13) {
-        case 0: return memwrt(addr & 0x07FF, val);
-        case 1: return ppu_set_reg(addr, val);
-        case 2: return; // TODO
-        case 3: return memwrt(addr & 0x1FFF, val);
-        default: {
-            log_warn("prg-rom write!\n");
-            return memwrt(addr, val);
-        }
-    }
-}
 
 /**
  * @brief reset CPU
@@ -342,7 +400,17 @@ inline void status_6502() {
  * 
  */
 extern inline void interrupt_6502() {
-    // TODO
+#ifdef DEBUG_6502
+    printf("6502: nmi.\n");
+#endif
+    PSH(pc >> 8);
+    PSH(pc);
+    CL_B();
+    //SE_R();
+    CL_R();
+    SE_ID();
+    PSH(s);
+    pc = ((uint16_t) cpuread(I_NMI) | (uint16_t) ((uint16_t) cpuread(I_NMI + 1) << 8));
 }
 
 /**
@@ -374,7 +442,7 @@ inline void run_6502() {
 #ifdef DEBUG_6502
     if (cycles >= DEBUG_CYCLE) {
         printf("op: %.2x, a: %u, v: %u, acc: %u, x: %u, y: %u, pc: %u, sp: %u, s: %u, cyc: %llu.\n", op, a, v, acc, x, y, pc, sp, s, cycles);
-    }
+    } else fprintf(stderr, "op: %.2x, a: %u, v: %u, acc: %u, x: %u, y: %u, pc: %u, sp: %u, s: %u, cyc: %llu.\n", op, a, v, acc, x, y, pc, sp, s, cycles);
 #endif
     switch(op) {
         OP(0x00, IMP, BRK, 7) OP(0x01, INX, ORA, 6) OP(0x03, INX, SLO, 8) OP(0x04, ZPG, NOP, 2) OP(0x05, ZPG, ORA, 3) 
